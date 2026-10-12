@@ -17,12 +17,8 @@ Prompt template (all stages): `### Instruction:\n{instruction}\n\n### Response:\
 ## Kaggle runbook (cells, in order)
 ```bash
 # Task 1 – setup (do NOT reinstall torch)
-git clone <YOUR_REPO_URL> && cd small-model-alignment
-python -m pip uninstall -y -q torchao || true
-python -m pip install -q "transformers>=4.43.0,<5" "datasets>=2.18,<5" huggingface_hub accelerate tqdm pyyaml sentencepiece safetensors "pytest>=8"
-python -m pip install -q -e . --no-deps
-nvidia-smi && python -c "import torch,transformers,datasets as d;print(torch.__version__,transformers.__version__,d.__version__,torch.cuda.device_count())"
-PYTHONPATH=. python -m pytest -q tests
+git clone https://github.com/Ammar946/small-model-alignment && cd small-model-alignment
+bash scripts/kaggle_setup.sh   # installs deps, prints versions, checks 2 GPUs, runs tests
 
 # Task 2 – baseline (300 prompts, seed 42, greedy)
 python scripts/generate.py --model Qwen/Qwen2.5-0.5B --name qwen2.5-0.5b-base --prompts alpaca --out outputs/gen/base_alpaca.json --limit 3   # sanity
