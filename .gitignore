@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+outputs/
+__pycache__/
+PA2.pdf
