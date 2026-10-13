@@ -163,15 +163,26 @@ def batch_response_logps(model, batch: Batch) -> Tuple[torch.Tensor, torch.Tenso
     through the logits unless the caller wraps this in ``torch.no_grad()``.
     """
     batch = _to_device(batch, _model_device(model))
-    logits = _logits(model, batch)[:, :-1, :].float()  # float32 for a stable log-softmax
+    logits = _logits(model, batch)[:, :-1, :]  # keep native dtype (fp16 under autocast)
     labels = batch["labels"][:, 1:]
     mask = labels != IGNORE_INDEX
-    safe_labels = labels.masked_fill(~mask, 0)  # any valid index; masked out below
+    safe_labels = labels.masked_fill(~mask, 0)
     vocab = logits.shape[-1]
-    token_logps = -F.cross_entropy(
-        logits.reshape(-1, vocab), safe_labels.reshape(-1), reduction="none"
-    ).view_as(labels)
-    token_logps = token_logps * mask  # zero prompt/pad positions
+
+    # Process in token chunks to avoid allocating huge [B*T, V] float32 log_softmax buffers.
+    # For models with large vocabularies (e.g. Qwen2.5 with V=151936), materializing the entire
+    # float32 logit matrix for batched sequences requires several gigabytes of GPU VRAM.
+    flat_logits = logits.reshape(-1, vocab)
+    flat_labels = safe_labels.reshape(-1)
+    flat_mask = mask.reshape(-1)
+    chunk_size = 1024
+    logps_chunks = []
+    for start in range(0, flat_logits.shape[0], chunk_size):
+        end = min(start + chunk_size, flat_logits.shape[0])
+        chunk_logits = flat_logits[start:end].float()
+        chunk_nll = F.cross_entropy(chunk_logits, flat_labels[start:end], reduction="none")
+        logps_chunks.append((-chunk_nll) * flat_mask[start:end])
+    token_logps = torch.cat(logps_chunks, dim=0).view_as(labels)
     return token_logps.sum(dim=-1), mask.sum(dim=-1)
 
 

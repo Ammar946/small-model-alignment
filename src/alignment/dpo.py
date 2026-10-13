@@ -40,6 +40,8 @@ def reference_logps(ref, tok, rows, args):
 def evaluate_dpo(policy, ref, tok, val, args, cache: dict):
     """Validation DPO loss, reward accuracy (strict r_w > r_l), and mean margin."""
     policy.eval()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     losses, accs, margins = [], [], []
     for i in range(0, len(val), args.eval_batch_size):
         rows = val[i:i + args.eval_batch_size]
@@ -53,6 +55,8 @@ def evaluate_dpo(policy, ref, tok, val, args, cache: dict):
         s = dpo_reward_stats(pol_c, pol_r, ref_c, ref_r, args.beta)
         accs.append(s["accuracy"]); margins.append(s["margin"])
     policy.train()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     cat = lambda xs: torch.cat(xs).mean().item()
     return {"val_loss": cat(losses), "reward_accuracy": cat(accs), "reward_margin": cat(margins)}
 

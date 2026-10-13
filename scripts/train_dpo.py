@@ -19,7 +19,7 @@ p.add_argument("--optimizer", choices=["adamw", "rmsprop"], default="adamw")
 p.add_argument("--weight_decay", type=float, default=0.0)
 p.add_argument("--max_grad_norm", type=float, default=1.0)
 p.add_argument("--epochs", type=int, default=1)
-p.add_argument("--eval_batch_size", type=int, default=8)
+p.add_argument("--eval_batch_size", type=int, default=2)
 p.add_argument("--eval_every", type=int, default=50)        # optimizer steps
 p.add_argument("--log_every", type=int, default=5)
 p.add_argument("--resume_every", type=int, default=100, help="0 disables resume state")
