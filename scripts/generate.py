@@ -33,7 +33,9 @@ p.add_argument("--batch_size", type=int, default=16)
 p.add_argument("--force", action="store_true")
 a = p.parse_args()
 
-if os.path.exists(a.out) and not a.force and a.limit is None:
+if a.limit:
+    a.out = a.out + ".sanity.json"  # never collide with the real output file
+elif os.path.exists(a.out) and not a.force:
     print("exists, skipping:", a.out); sys.exit(0)  # restartable notebooks
 
 rows = load_alpaca_subset(a.n, a.seed) if a.prompts == "alpaca" else load_prompt_file(a.prompts)
