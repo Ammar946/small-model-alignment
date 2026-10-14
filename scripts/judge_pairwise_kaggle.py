@@ -52,13 +52,41 @@ def make_caller(model_name: str, dry_run: bool):
             ids = re.findall(r"### Pair id: (.*)", prompt)
             return json.dumps([{"id": i, "winner": "AB"[hash(i) % 2], "reason": "dry run"} for i in ids])
         return fake
-    import kaggle_benchmarks as kbench  # available in Kaggle utility-benchmark notebooks
+
+    # Primary: Kaggle benchmark / model proxy (free within Kaggle utility benchmarks)
     try:
-        llm = kbench.llms[model_name]
-    except Exception:
-        llm = kbench.llm  # fall back to the notebook's default proxy model
-        print(f"[warn] '{model_name}' not in kbench.llms; using default kbench.llm")
-    return lambda prompt: str(llm.prompt(prompt))
+        import kaggle_benchmarks as kbench
+        try:
+            llm = kbench.llms[model_name]
+        except Exception:
+            llm = getattr(kbench, "llm", None)
+            if llm is None:
+                raise
+            print(f"[warn] '{model_name}' not in kbench.llms; using default kbench.llm")
+        return lambda prompt: str(llm.prompt(prompt))
+    except Exception as e_kbench:
+        # Fallback: standard Gemini API via google.generativeai if API key is provided
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if api_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+                gem_name = model_name.split("/")[-1] if "/" in model_name else model_name
+                # map to known gemini endpoints if needed
+                if "gemini" not in gem_name:
+                    gem_name = "gemini-1.5-flash"
+                client = genai.GenerativeModel(gem_name)
+                print(f"[info] Using google.generativeai with model '{gem_name}'")
+                return lambda prompt: client.generate_content(prompt).text
+            except Exception as e_genai:
+                raise RuntimeError(
+                    f"Failed kaggle_benchmarks ({e_kbench}) and google.generativeai ({e_genai}). "
+                    "Ensure you run inside a Kaggle utility benchmark notebook or set GEMINI_API_KEY."
+                )
+        raise RuntimeError(
+            f"kaggle_benchmarks unavailable ({e_kbench}). "
+            "Please configure the Kaggle notebook as a utility benchmark, or set GEMINI_API_KEY in Kaggle Secrets."
+        )
 
 
 def resolve(row, label):
