@@ -65,24 +65,67 @@ def make_caller(model_name: str, dry_run: bool):
             print(f"[warn] '{model_name}' not in kbench.llms; using default kbench.llm")
         return lambda prompt: str(llm.prompt(prompt))
     except Exception as e_kbench:
-        # Fallback: standard Gemini API via google.generativeai if API key is provided
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        api_key = (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("Gemini API Key")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
         if api_key:
+            # 1. Try modern google.genai
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                gem_name = model_name.split("/")[-1] if "/" in model_name else model_name
-                # map to known gemini endpoints if needed
-                if "gemini" not in gem_name:
-                    gem_name = "gemini-1.5-flash"
-                client = genai.GenerativeModel(gem_name)
-                print(f"[info] Using google.generativeai with model '{gem_name}'")
-                return lambda prompt: client.generate_content(prompt).text
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                for cand in [model_name, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]:
+                    cand_clean = cand.split("/")[-1]
+                    try:
+                        res = client.models.generate_content(model=cand_clean, contents="ping")
+                        if res.text:
+                            print(f"[info] Using google.genai with model '{cand_clean}'")
+                            return lambda prompt: client.models.generate_content(model=cand_clean, contents=prompt).text
+                    except Exception:
+                        continue
+                try:
+                    for m in client.models.list():
+                        m_name = m.name.split("/")[-1]
+                        if "flash" in m_name or "gemini" in m_name:
+                            try:
+                                res = client.models.generate_content(model=m_name, contents="ping")
+                                if res.text:
+                                    print(f"[info] Using google.genai with discovered model '{m_name}'")
+                                    return lambda prompt: client.models.generate_content(model=m_name, contents=prompt).text
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # 2. Try legacy google.generativeai with dynamic model discovery
+            try:
+                import google.generativeai as legacy_genai
+                legacy_genai.configure(api_key=api_key)
+                available = [
+                    m.name for m in legacy_genai.list_models()
+                    if "generateContent" in getattr(m, "supported_generation_methods", [])
+                ]
+                chosen_m = None
+                for cand in [model_name, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]:
+                    cand_clean = cand.split("/")[-1]
+                    match = [m for m in available if cand_clean in m]
+                    if match:
+                        chosen_m = match[0]
+                        break
+                if not chosen_m and available:
+                    flash_cands = [m for m in available if "flash" in m]
+                    chosen_m = flash_cands[0] if flash_cands else available[0]
+
+                if chosen_m:
+                    print(f"[info] Using google.generativeai with model '{chosen_m}'")
+                    c_model = legacy_genai.GenerativeModel(chosen_m)
+                    return lambda prompt: c_model.generate_content(prompt).text
             except Exception as e_genai:
-                raise RuntimeError(
-                    f"Failed kaggle_benchmarks ({e_kbench}) and google.generativeai ({e_genai}). "
-                    "Ensure you run inside a Kaggle utility benchmark notebook or set GEMINI_API_KEY."
-                )
+                raise RuntimeError(f"Failed calling Gemini API ({e_genai}). Check API key and quota.")
+
         raise RuntimeError(
             f"kaggle_benchmarks unavailable ({e_kbench}). "
             "Please configure the Kaggle notebook as a utility benchmark, or set GEMINI_API_KEY in Kaggle Secrets."
