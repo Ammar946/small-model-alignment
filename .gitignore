@@ -1,8 +1,13 @@
 __pycache__/
 *.py[cod]
+.DS_Store
 
 .venv/
-outputs/
-__pycache__/
 PA2.pdf
 Kaggle/
+
+outputs/*
+!outputs/eval/
+!outputs/gen/
+!outputs/**/*.png
+!outputs/**/metrics.jsonl

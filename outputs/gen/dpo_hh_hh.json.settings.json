@@ -1,0 +1,18 @@
+{
+  "model": "/kaggle/working/outputs/dpo_hh/best",
+  "adapter": null,
+  "name": "dpo-hh",
+  "prompts": "eval_sets/hh_rlhf_eval_300_seed42.json",
+  "dataset_name": "hh_eval",
+  "out": "/kaggle/working/outputs/gen/dpo_hh_hh.json",
+  "format": "plain",
+  "n": 300,
+  "seed": 42,
+  "limit": null,
+  "max_new_tokens": 256,
+  "repetition_penalty": 1.1,
+  "no_repeat_ngram_size": 0,
+  "batch_size": 16,
+  "force": false,
+  "n_generated": 300
+}

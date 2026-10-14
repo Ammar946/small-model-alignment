@@ -1,0 +1,18 @@
+{
+  "model": "/kaggle/working/outputs/dpo_uf/best",
+  "adapter": null,
+  "name": "dpo-uf",
+  "prompts": "alpaca",
+  "dataset_name": null,
+  "out": "/kaggle/working/outputs/gen/dpo_uf_alpaca.json",
+  "format": "plain",
+  "n": 300,
+  "seed": 42,
+  "limit": null,
+  "max_new_tokens": 256,
+  "repetition_penalty": 1.1,
+  "no_repeat_ngram_size": 0,
+  "batch_size": 16,
+  "force": false,
+  "n_generated": 300
+}
