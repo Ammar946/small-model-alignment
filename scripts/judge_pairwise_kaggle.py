@@ -178,7 +178,7 @@ def main():
 
     for b in range(0, len(todo), a.batch_size):
         pending = todo[b:b + a.batch_size]
-        errors = {}
+        is_rate_limit = False
         for attempt in range(1, a.max_retries + 1):
             try:
                 verdicts = parse_verdicts(call(build_prompt(pending, a.safety)))
@@ -194,16 +194,25 @@ def main():
                     else:
                         still.append(r)
                 pending = still
-            except Exception as e:  # network, denial, malformed JSON...
-                errors = {"error": repr(e)[:300]}
-            if not pending:
-                break
-            time.sleep(a.sleep_seconds)  # backoff before retrying the unresolved remainder
+                if not pending:
+                    break
+                time.sleep(a.sleep_seconds)
+            except Exception as e:  # network, denial, rate limit, malformed JSON...
+                err_str = repr(e)
+                errors = {"error": err_str[:300]}
+                is_rate_limit = any(x in err_str.lower() for x in ["429", "resource_exhausted", "quota", "rate"])
+                backoff = max(25.0, a.sleep_seconds * (2 ** attempt)) if is_rate_limit else a.sleep_seconds
+                print(f"  [batch {b // a.batch_size + 1}] attempt {attempt}/{a.max_retries} failed: {err_str[:120]}... backoff {backoff:.1f}s", flush=True)
+                time.sleep(backoff)
+
         for r in pending:
             append_jsonl(fail_path, {"id": r["id"], "attempts": a.max_retries, **errors})
         print(f"batch {b // a.batch_size + 1}/{-(-len(todo) // a.batch_size)} "
               f"unresolved={len(pending)}", flush=True)
-        time.sleep(a.sleep_seconds)  # spacing between requests
+        if pending and is_rate_limit:
+            time.sleep(20.0)
+        else:
+            time.sleep(a.sleep_seconds)
 
     judged = read_jsonl(a.output_path)
     judged_ids = {r["id"] for r in judged}
