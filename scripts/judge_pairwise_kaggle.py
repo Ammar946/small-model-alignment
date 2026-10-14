@@ -75,7 +75,7 @@ def make_caller(model_name: str, dry_run: bool):
             try:
                 from google import genai
                 client = genai.Client(api_key=api_key)
-                for cand in [model_name, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]:
+                for cand in [model_name, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]:
                     cand_clean = cand.split("/")[-1]
                     try:
                         res = client.models.generate_content(model=cand_clean, contents="ping")
@@ -100,7 +100,7 @@ def make_caller(model_name: str, dry_run: bool):
             except Exception:
                 pass
 
-            # 2. Try legacy google.generativeai with dynamic model discovery
+            # 2. Try legacy google.generativeai with dynamic model discovery and ping verification
             try:
                 import google.generativeai as legacy_genai
                 legacy_genai.configure(api_key=api_key)
@@ -108,21 +108,23 @@ def make_caller(model_name: str, dry_run: bool):
                     m.name for m in legacy_genai.list_models()
                     if "generateContent" in getattr(m, "supported_generation_methods", [])
                 ]
-                chosen_m = None
-                for cand in [model_name, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]:
-                    cand_clean = cand.split("/")[-1]
-                    match = [m for m in available if cand_clean in m]
-                    if match:
-                        chosen_m = match[0]
-                        break
-                if not chosen_m and available:
-                    flash_cands = [m for m in available if "flash" in m]
-                    chosen_m = flash_cands[0] if flash_cands else available[0]
+                # Prioritize gemini-3.8-flash as recommended by Google API
+                candidates = [model_name, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
+                for c in available:
+                    if c not in candidates:
+                        candidates.append(c)
 
-                if chosen_m:
-                    print(f"[info] Using google.generativeai with model '{chosen_m}'")
-                    c_model = legacy_genai.GenerativeModel(chosen_m)
-                    return lambda prompt: c_model.generate_content(prompt).text
+                for cand in candidates:
+                    cand_clean = cand.split("/")[-1]
+                    for name_variant in [cand, cand_clean, f"models/{cand_clean}"]:
+                        try:
+                            c_model = legacy_genai.GenerativeModel(name_variant)
+                            res = c_model.generate_content("ping")
+                            if res.text:
+                                print(f"[info] Using google.generativeai with verified model '{name_variant}'")
+                                return lambda prompt: c_model.generate_content(prompt).text
+                        except Exception:
+                            continue
             except Exception as e_genai:
                 raise RuntimeError(f"Failed calling Gemini API ({e_genai}). Check API key and quota.")
 
@@ -156,7 +158,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--pairs_path", required=True)
     p.add_argument("--output_path", required=True)
-    p.add_argument("--judge_model", default="google/gemini-3.6-flash")
+    p.add_argument("--judge_model", default="gemini-3.8-flash")
     p.add_argument("--batch_size", type=int, default=5)
     p.add_argument("--sleep_seconds", type=float, default=5)
     p.add_argument("--max_retries", type=int, default=3)
