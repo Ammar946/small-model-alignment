@@ -4,6 +4,11 @@ python scripts/train_lora_dpo.py --data data/persona_lora/ramsay_style_preferenc
 Extra deps: pip install -q trl peft
 """
 import argparse, dataclasses, inspect, os, sys
+# DPOTrainer does not allow DataParallel when multiple GPUs are visible in a single process.
+# SmolLM2-360M is lightweight and easily fits on a single GPU (cuda:0).
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import torch
@@ -33,7 +38,10 @@ a = p.parse_args()
 tok = AutoTokenizer.from_pretrained(a.model)
 if tok.pad_token is None:
     tok.pad_token = tok.eos_token
-model = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.float32)  # fp32 weights + fp16 autocast
+try:
+    model = AutoModelForCausalLM.from_pretrained(a.model, dtype=torch.float32)
+except TypeError:
+    model = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.float32)
 
 ds = Dataset.from_list(load_persona_pairs(a.data))
 lora = LoraConfig(r=a.rank, lora_alpha=a.alpha, lora_dropout=a.dropout, task_type="CAUSAL_LM",
