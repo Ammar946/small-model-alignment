@@ -1,0 +1,13 @@
+{
+  "total_pairs": 300,
+  "judged": 300,
+  "dpo_wins": 141,
+  "sft_wins": 91,
+  "ties": 68,
+  "unknown": 0,
+  "failed_unresolved": 0,
+  "dpo_win_rate_incl_ties_as_half": 0.5833333333333334,
+  "dpo_win_rate_excl_ties": 0.6077586206896551,
+  "position_A_picks": 108,
+  "position_B_picks": 124
+}
