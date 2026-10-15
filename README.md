@@ -1,4 +1,5 @@
 # Small-Model Alignment: SFT + DPO on Qwen2.5-0.5B (Kaggle T4 x2)
+**Author:** Muhammad Ammar | **Roll Number:** 25280019  
 
 From-scratch SFT and DPO (PyTorch + Transformers only), a TRL/LoRA persona run, and a resumable LLM-judge evaluation.
 

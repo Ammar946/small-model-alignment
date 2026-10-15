@@ -1,6 +1,7 @@
 # Small-Model Alignment: SFT and DPO on Qwen2.5-0.5B
 **CS5326: Advanced Generative AI — Programming Assignment 2**  
-*Student:* Ammar Shahbaz  
+*Student:* Muhammad Ammar  
+*Roll Number:* 25280019  
 *Repository:* [https://github.com/Ammar946/small-model-alignment](https://github.com/Ammar946/small-model-alignment)  
 *Date:* October 2026  
 
