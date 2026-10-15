@@ -46,12 +46,27 @@ def parse_verdicts(text: str):
     return out
 
 
-def make_caller(model_name: str, dry_run: bool):
+def make_caller(model_name: str, dry_run: bool, local_model: str = None):
     if dry_run:  # offline plumbing test; deterministic fake verdicts
         def fake(prompt):
             ids = re.findall(r"### Pair id: (.*)", prompt)
             return json.dumps([{"id": i, "winner": "AB"[hash(i) % 2], "reason": "dry run"} for i in ids])
         return fake
+
+    if local_model:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        print(f"[info] Loading local judge model '{local_model}'...")
+        tok = AutoTokenizer.from_pretrained(local_model)
+        m = AutoModelForCausalLM.from_pretrained(
+            local_model, torch_dtype=torch.bfloat16, device_map="auto"
+        )
+        def local_call(prompt):
+            inputs = tok(prompt, return_tensors="pt").to(m.device)
+            with torch.no_grad():
+                out = m.generate(**inputs, max_new_tokens=512, temperature=0.1, do_sample=False)
+            return tok.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+        return local_call
 
     # Primary: Kaggle benchmark / model proxy (free within Kaggle utility benchmarks)
     try:
@@ -65,68 +80,105 @@ def make_caller(model_name: str, dry_run: bool):
             print(f"[warn] '{model_name}' not in kbench.llms; using default kbench.llm")
         return lambda prompt: str(llm.prompt(prompt))
     except Exception as e_kbench:
-        api_key = (
+        api_key_str = (
             os.environ.get("GEMINI_API_KEY")
             or os.environ.get("Gemini API Key")
             or os.environ.get("GOOGLE_API_KEY")
         )
-        if api_key:
-            # 1. Try modern google.genai
+        if api_key_str:
+            keys = [k.strip() for k in api_key_str.split(",") if k.strip()]
+            model_pool = [
+                model_name.split("/")[-1],
+                "gemini-3.7-flash",
+                "gemini-3.6-flash",
+                "gemini-flash-latest",
+                "gemini-3.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-3.1-flash-lite"
+            ]
+            seen = set()
+            pool = [m for m in model_pool if not (m in seen or seen.add(m))]
+
+            # 1. Try modern google.genai with automatic model-pool failover
             try:
                 from google import genai
-                client = genai.Client(api_key=api_key)
-                for cand in [model_name, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]:
-                    cand_clean = cand.split("/")[-1]
+                clients = [genai.Client(api_key=k) for k in keys]
+                active_model = [pool[0]]
+
+                def call_genai(prompt):
+                    last_err = None
+                    # First try current active model, then rotate through the rest of the pool
+                    ordered_pool = active_model + [m for m in pool if m != active_model[0]]
+                    for client in clients:
+                        for m in ordered_pool:
+                            try:
+                                res = client.models.generate_content(model=m, contents=prompt)
+                                if res.text:
+                                    if active_model[0] != m:
+                                        print(f"  [failover] switched active model to '{m}'")
+                                        active_model[0] = m
+                                    return res.text
+                            except Exception as e:
+                                err_str = repr(e)
+                                last_err = e
+                                if any(x in err_str.lower() for x in ["503", "unavailable", "429", "resource_exhausted", "quota"]):
+                                    # Server busy or quota reached: fail over immediately to next model in pool!
+                                    continue
+                                else:
+                                    continue
+                    raise last_err or RuntimeError("All models and keys in pool failed")
+
+                # Verify connectivity
+                for m in pool:
                     try:
-                        res = client.models.generate_content(model=cand_clean, contents="ping")
+                        res = clients[0].models.generate_content(model=m, contents="ping")
                         if res.text:
-                            print(f"[info] Using google.genai with model '{cand_clean}'")
-                            return lambda prompt: client.models.generate_content(model=cand_clean, contents=prompt).text
+                            active_model[0] = m
+                            print(f"[info] google.genai connected. Active model: '{m}', failover pool: {pool}")
+                            return call_genai
                     except Exception:
                         continue
-                try:
-                    for m in client.models.list():
-                        m_name = m.name.split("/")[-1]
-                        if "flash" in m_name or "gemini" in m_name:
-                            try:
-                                res = client.models.generate_content(model=m_name, contents="ping")
-                                if res.text:
-                                    print(f"[info] Using google.genai with discovered model '{m_name}'")
-                                    return lambda prompt: client.models.generate_content(model=m_name, contents=prompt).text
-                            except Exception:
-                                continue
-                except Exception:
-                    pass
             except Exception:
                 pass
 
-            # 2. Try legacy google.generativeai with dynamic model discovery and ping verification
+            # 2. Try legacy google.generativeai with dynamic pool fallback
             try:
                 import google.generativeai as legacy_genai
-                legacy_genai.configure(api_key=api_key)
+                legacy_genai.configure(api_key=keys[0])
                 available = [
                     m.name for m in legacy_genai.list_models()
                     if "generateContent" in getattr(m, "supported_generation_methods", [])
                 ]
-                # Prioritize gemini-3.8-flash as recommended by Google API
-                candidates = [model_name, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
-                for c in available:
-                    if c not in candidates:
-                        candidates.append(c)
+                legacy_pool = []
+                for p in pool:
+                    clean = p.split("/")[-1]
+                    matches = [m for m in available if clean in m]
+                    legacy_pool.extend(matches)
+                if not legacy_pool and available:
+                    legacy_pool = available
 
-                for cand in candidates:
-                    cand_clean = cand.split("/")[-1]
-                    for name_variant in [cand, cand_clean, f"models/{cand_clean}"]:
+                active_legacy = [legacy_pool[0]]
+                def call_legacy(prompt):
+                    last_err = None
+                    ordered = active_legacy + [m for m in legacy_pool if m != active_legacy[0]]
+                    for m_name in ordered:
                         try:
-                            c_model = legacy_genai.GenerativeModel(name_variant)
-                            res = c_model.generate_content("ping")
+                            c_model = legacy_genai.GenerativeModel(m_name)
+                            res = c_model.generate_content(prompt)
                             if res.text:
-                                print(f"[info] Using google.generativeai with verified model '{name_variant}'")
-                                return lambda prompt: c_model.generate_content(prompt).text
-                        except Exception:
+                                if active_legacy[0] != m_name:
+                                    print(f"  [failover] switched legacy model to '{m_name}'")
+                                    active_legacy[0] = m_name
+                                return res.text
+                        except Exception as e:
+                            last_err = e
                             continue
+                    raise last_err or RuntimeError("All legacy models failed")
+
+                print(f"[info] google.generativeai connected with pool: {legacy_pool}")
+                return call_legacy
             except Exception as e_genai:
-                raise RuntimeError(f"Failed calling Gemini API ({e_genai}). Check API key and quota.")
+                raise RuntimeError(f"Failed calling Gemini API ({e_genai}). Check API key.")
 
         raise RuntimeError(
             f"kaggle_benchmarks unavailable ({e_kbench}). "
@@ -158,7 +210,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--pairs_path", required=True)
     p.add_argument("--output_path", required=True)
-    p.add_argument("--judge_model", default="gemini-3.8-flash")
+    p.add_argument("--judge_model", default="gemini-3.7-flash")
+    p.add_argument("--local_judge", type=str, default=None, help="Hugging Face model id for offline GPU judging (e.g. Qwen/Qwen2.5-3B-Instruct)")
     p.add_argument("--batch_size", type=int, default=5)
     p.add_argument("--sleep_seconds", type=float, default=5)
     p.add_argument("--max_retries", type=int, default=3)
@@ -174,7 +227,7 @@ def main():
         os.remove(a.output_path)
     todo = [r for r in pairs if r["id"] not in done]
     print(f"{len(pairs)} pairs, {len(done)} already judged, {len(todo)} to do")
-    call = make_caller(a.judge_model, a.dry_run)
+    call = make_caller(a.judge_model, a.dry_run, a.local_judge)
 
     for b in range(0, len(todo), a.batch_size):
         pending = todo[b:b + a.batch_size]
